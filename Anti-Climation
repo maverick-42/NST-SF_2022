@@ -72,7 +72,7 @@ float waterLevelUpperThreshold = 1.0;
 #define AIO_SERVER      "io.adafruit.com"
 #define AIO_SERVERPORT  1883                   
 #define AIO_USERNAME   "_Maverick_"
-#define AIO_KEY        "aio_UgxQ48jdYiIPEs5E1XLxH99Z6rVr"
+#define AIO_KEY        "aio_ZzAf595FPmxEQFysYuMaDPSs7auF"
 
   
 // BLUETOOTH CLIENT
