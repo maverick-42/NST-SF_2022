@@ -72,7 +72,7 @@ float waterLevelUpperThreshold = 1.0;
 #define AIO_SERVER      "io.adafruit.com"
 #define AIO_SERVERPORT  1883                   
 #define AIO_USERNAME   "_Maverick_"
-#define AIO_KEY        "aio_xmvu79ZHm4zVbpwbPuqCBrKOaHZr"
+#define AIO_KEY        "aio_jGNU96vkM6mWWbfodohxZ459iR88"
 
   
 // BLUETOOTH CLIENT
@@ -90,7 +90,7 @@ int bluedata;
 // WIFI CLIENT
 
 #define WLAN_SSID       "TP-LINK_D8B6"
-#define WLAN_PASS       "farhan2758"   //12345678
+#define WLAN_PASS       "farhan2758"
 
 WiFiClient client;
 
@@ -742,4 +742,4 @@ void MQTT_connect()
     }
    }
    Serial.println("MQTT Connected!\n");
-  }
+  } 
