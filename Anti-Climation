@@ -1,0 +1,745 @@
+
+#include <ETH.h>
+#include <WiFi.h>
+#include <WiFiAP.h>
+#include <WiFiSTA.h>
+#include <WiFiUdp.h>
+#include <WiFiScan.h>
+#include <WiFiType.h>
+#include <WiFiMulti.h>
+#include <WiFiClient.h>
+#include <WiFiServer.h>
+#include <HTTPClient.h>
+#include <WiFiGeneric.h>
+#include <BluetoothSerial.h>
+
+#include <Servo.h>
+#include <HCSR04.h>
+#include <Arduino.h>
+#include <AsyncTCP.h>
+#include <ArduinoJson.h>
+#include <Adafruit_MQTT.h>
+#include <AsyncElegantOTA.h>
+#include <ESPAsyncWebServer.h>
+#include <Adafruit_MQTT_Client.h>  
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+
+// 2 Channel 5V Relay Module
+int Relay1 = 26;
+int Relay2 = 27;
+
+//TowerPro SG90 9g Micro Servo
+Servo servo ;
+Servo myservo;
+int Garage1 = 13;
+int pos = 0; 
+int eastLDR = 32;
+int westLDR = 33;
+int east = 0;
+int west = 0;
+int error = 0;
+int calibration = 600;
+int servoposition = 90;
+int servoPWM = 25;
+
+// YL-69 Soil Hygrometer Humidity & Soil Moisture Sensor && 5V Relay Module
+int soil_moisture = 35;
+int moistureValue = 0;
+int moistureThreshold = 1200;
+
+// HC- SR04 Ultrasonic Sensor && 5V Relay Module
+UltraSonicDistanceSensor distanceSensor(12,14);
+int waterLevelDownCount = 0;
+int waterLevelUpCount = 0;
+int max_height = 9;
+int radius = 16;
+float volume;
+float liters;
+float waterLevelLowerThreshold = 0.4;
+float waterLevelUpperThreshold = 1.0;
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+
+//Adafruit.io Setup
+
+#define AIO_SERVER      "io.adafruit.com"
+#define AIO_SERVERPORT  1883                   
+#define AIO_USERNAME   "_Maverick_"
+#define AIO_KEY        "aio_vgPA75ETnUvJ46XpG5KIoa7TAWGu"
+
+  
+// BLUETOOTH CLIENT
+
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run
+`make menuconfig` to and enable it
+#endif
+
+BluetoothSerial SerialBT;
+
+int bluedata;
+
+
+// WIFI CLIENT
+
+#define WLAN_SSID       "TP-LINK_D8B6"
+#define WLAN_PASS       "farhan2758"
+
+WiFiClient client;
+
+
+// MQTT CLIENT
+
+Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
+
+Adafruit_MQTT_Subscribe Light = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME"/feeds/Light");
+Adafruit_MQTT_Subscribe Garage = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/Garage");
+Adafruit_MQTT_Publish Light0 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME"/feeds/Light");  
+Adafruit_MQTT_Publish Garage0 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Garage");
+Adafruit_MQTT_Publish Temperature = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Temperature");
+Adafruit_MQTT_Publish Humidity = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Humidity");
+Adafruit_MQTT_Publish Weather_Forecast = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Weather_Forecast");
+Adafruit_MQTT_Publish Soil_Moisture = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Soil_Moisture");
+Adafruit_MQTT_Publish Water_Level = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Water_Level");
+
+void MQTT_connect();
+
+// OWM CLIENT
+
+const char server0[] = "api.openweathermap.org";
+
+const char* icon;
+
+String apiKey = "ec69e58577aa76e3da15db4a8273ffd8";
+String city = "Joypurhat,BD";
+String text;
+
+int jsonend = 0;
+int jsonBUFF = 2500;
+
+int hum  = 0;
+int temp = 0;
+
+boolean startJson = false;
+
+unsigned long lastConnectionTime = 10 * 12000;
+const unsigned long postInterval = 10 * 12000;
+
+
+AsyncWebServer server(80);
+TaskHandle_t Loop0;
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+
+void setup() {
+  
+  Serial.begin(115200);
+  delay(500);
+  
+  pinMode(Relay1, OUTPUT);
+  pinMode(Relay2, OUTPUT);
+  pinMode(Garage1, OUTPUT);
+  
+  pinMode(soil_moisture,INPUT);
+  
+  servo.attach(servoPWM);
+  myservo.attach(Garage1);  
+  
+  digitalWrite(Relay1, HIGH);
+  digitalWrite(Relay2, HIGH);
+  digitalWrite(Garage1, HIGH);
+
+  mqtt.subscribe(&Light);
+  mqtt.subscribe(&Garage);
+
+  // Connection to WiFi access point. 
+  {
+  Serial.println();Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(WLAN_SSID);
+ 
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WLAN_SSID, WLAN_PASS);
+  while (WiFi.status() != WL_CONNECTED) 
+  {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.println("WiFi connected!");
+  Serial.println("IP address: "); 
+  Serial.println(WiFi.localIP());
+  Serial.println();
+  }
+  
+  // Connection to BLE access point.
+  { 
+  btStart();  
+  Serial.println("Bluetooth On!");
+  SerialBT.begin("ESP32_Bluetooth");
+  Serial.println("The device started, now you can pair it with bluetooth!");
+  Serial.println();
+  }
+
+  // Connection to ASYNC access point.
+  { 
+  AsyncElegantOTA.begin(&server);
+  server.begin();
+  Serial.println("ASYNC server started!");
+  Serial.println();
+  }
+  
+  // Arduino JSON
+    text.reserve(jsonBUFF);
+
+  // Creating LOOP function.
+  {
+    xTaskCreatePinnedToCore(
+                      Loop0code,
+                      "Loop 0",
+                      10000,
+                      NULL,
+                      1,
+                      &Loop0,
+                      0);                
+  }   
+}
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+void Loop0code( void * pvParameters ) {
+  for(;;){         
+          {
+           WD_Automation();
+          }
+          {
+           ACSA_Automation();
+          }          
+          {
+           CSA_Automation();
+          }          
+          {
+           WT_Automation();
+          }     
+         } 
+        }
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+void loop() {             
+             {
+              STSP_Automation();
+             }                      
+            }
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+   
+  void ACSA_Automation()
+  
+  // Voice Assistant Controlled Home Automation
+  
+ { 
+  Adafruit_MQTT_Subscribe *subscription;
+  while ((subscription = mqtt.readSubscription(8000))) 
+   {
+    if (subscription == &Light) {
+      Serial.print(F("Light : "));
+      Serial.println((char *)Light.lastread);
+      Serial.println();
+      if (!strcmp((char*) Light.lastread, "OFF"))
+      {
+       digitalWrite(Relay1, HIGH);
+      }
+      if (!strcmp((char*) Light.lastread, "ON"))
+      {
+       digitalWrite(Relay1, LOW);
+      }   
+    }    
+    
+    if (subscription == &Garage) {
+      Serial.print(F("Garage Door : "));
+      Serial.println((char *)Garage.lastread);
+      Serial.println();
+      if (!strcmp((char*) Garage.lastread, "OFF"))
+      {
+           for (pos = 0; pos <= 100; pos += 1) 
+           {
+              myservo.write(pos);
+              delay(15);
+           }
+      }
+      if (!strcmp((char*) Garage.lastread, "ON"))
+      {
+         for (pos = 100; pos >= 0; pos -= 1) 
+         { 
+           myservo.write(pos);
+           delay(15);
+         }
+      }
+    }
+  }
+   while(SerialBT.available())
+    {
+      bluedata = SerialBT.parseInt();
+      Serial.println();
+      Serial.print(bluedata);
+      delay(20);
+      if (bluedata == 1) {
+        SerialBT.println("Light : ON");
+        Serial.print(" | Light : ON\n");
+        Serial.println();
+        Light0.publish("ON");
+        }
+      else if (bluedata == 2) {
+        SerialBT.println("Light : OFF");
+        Serial.print(" | Light : OFF\n");
+        Serial.println();
+        Light0.publish("OFF");     
+        }
+      else if (bluedata == 3) {
+        SerialBT.println("Garage : OPEN");
+        Serial.print(" | Garage : OPEN\n");
+        Serial.println();
+        Garage0.publish("ON");        
+        }
+      else if (bluedata == 4) {
+        SerialBT.println("Garage : CLOSE");
+        Serial.print(" | Garage : CLOSE\n");
+        Serial.println();
+        Garage0.publish("OFF");        
+        }
+    }   
+ } 
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+
+ void STSP_Automation()
+
+ // Automated Sun Tracking Solar Panel System
+
+ {
+  east = calibration + analogRead(eastLDR);
+  west = analogRead(westLDR);
+  if (east < 350 && west < 350)
+  {
+    while (servoposition <= 150)
+    {
+      servoposition++;
+      servo.write(servoposition);
+      delay(100);
+    }
+  }
+  error = east - west;
+  if (error > 15)
+  {
+    if (servoposition <= 150)
+    {
+      servoposition++;
+      servo.write(servoposition);
+    }
+  }
+  else if (error < -15)
+  {
+    if (servoposition > 20)
+    {
+      servoposition--;
+      servo.write(servoposition);
+    }
+  }
+  delay(100);
+ }
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+
+  void WD_Automation() 
+
+  // Automated Weather Data Cloud
+  
+  {            
+    unsigned long currentTime = millis();
+    if (millis() - lastConnectionTime > postInterval) 
+      {
+       lastConnectionTime = millis();
+       makehttpRequest();
+      }
+   }
+  
+  void makehttpRequest() {
+  
+  client.stop();
+  if (client.connect(server0, 80)) {
+    client.println("GET /data/2.5/forecast?q=" + city + "&APPID=" + apiKey + "&mode=json&units=metric&cnt=2 HTTP/1.1");
+    client.println("Host: api.openweathermap.org");
+    client.println("User-Agent: ESPWiFi/1.1");
+    client.println("Connection: close");
+    client.println();
+    
+    unsigned long timeout = millis();
+    while (client.available() == 0) {
+      if (millis() - timeout > 5000) {
+        Serial.println(">>> Client Timeout !");
+        Serial.println();
+        client.stop();
+        return;
+      }
+    }   
+    
+    char c = 0;
+    while (client.available()) {
+      c = client.read();
+      
+      if (c == '{') {
+        startJson = true;
+        jsonend++;
+      }
+      if (c == '}') {
+        jsonend--;
+      }
+      if (startJson == true) {
+        text += c;
+      }
+      if (jsonend == 0 && startJson == true) {
+        parseJson(text.c_str());
+        text = "";
+        startJson = false;
+      }
+    }
+  }
+  else {
+    Serial.println("HTTP connection failed");
+    return;
+  }
+}
+
+ void parseJson(const char * jsonString) { 
+
+  MQTT_connect();
+  
+  const size_t bufferSize = 2*JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + 4*JSON_OBJECT_SIZE(1) + 3*JSON_OBJECT_SIZE(2) + 3*JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(5) + 2*JSON_OBJECT_SIZE(7) + 2*JSON_OBJECT_SIZE(8) + 720;
+  
+  DynamicJsonBuffer jsonBuffer(bufferSize);
+  
+  JsonObject& root = jsonBuffer.parseObject(text);
+  
+  if (!root.success()) {
+    Serial.println("parseObject() failed");
+    return;
+  }
+  
+  JsonArray& list = root["list"];
+  
+  JsonObject& nowT = list[0];
+  JsonObject& later = list[1];
+  JsonObject& weatherLater = later["weather"][0];
+
+  int temp = nowT["main"]["temp"];
+  int hum  = nowT["main"]["humidity"];  
+  int ID   = weatherLater["id"];
+  
+  Serial.print(temp); 
+  Serial.println(" *C"); 
+  Serial.print(hum); 
+  Serial.println(" %H");
+   
+   if (! Temperature.publish(temp)) {
+        Serial.println(F("Failed\n"));
+      } 
+   if (! Humidity.publish(hum/2)) {
+        Serial.println(F("Failed\n"));
+       }
+  else {
+        Serial.println(F("Sent!\n"));
+       }   
+       
+  if(ID == 800) {
+    icon = "Clear Sky";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }         
+   }
+  
+  else if(ID == 801) {
+    icon = "Few Clouds";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }         
+   }
+  
+  else if(ID == 802) {
+    icon = "Scattered Clouds";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }         
+   }
+    
+  else if(ID == 803) {
+    icon = "Broken Clouds";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }         
+   }
+  
+  else if(ID == 804) {
+    icon = "Overcast Clouds";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }         
+   }
+   
+  else if(ID == 300 || ID == 301 || ID == 302 || ID == 310 || ID == 311 || ID == 312 || ID == 313 || ID == 314 || ID == 321) {
+    icon = "Drizzle";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }         
+   }
+    
+  else if(ID == 500 || ID == 501 || ID == 502 || ID == 503 || ID == 504 || ID == 511 || ID == 520 || ID == 521 || ID == 522 || ID == 531) {
+    icon = "Rain";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }        
+   }
+  
+  else if(ID == 200 || ID == 201 || ID == 202 || ID == 210 || ID == 211 || ID == 212 || ID == 221 || ID == 230 || ID == 231 || ID == 232) {
+    icon = "Storm";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }        
+   }      
+     
+  else if(ID == 600 || ID == 601 || ID == 602 || ID == 611 || ID == 612 || ID == 613 || ID == 615 || ID == 616 || ID == 620 || ID == 621 || ID == 622) {
+    icon = "Snow";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }    
+   }
+
+    
+  else {
+    icon = "Atmosphere";
+    Serial.print(icon);
+    Serial.println();
+    Weather_Forecast.publish(icon);
+    
+    if (! Weather_Forecast.publish(icon)) 
+      {
+       Serial.println(F("Failed\n"));
+      }
+    else 
+      {
+       Serial.println(F("Sent!\n"));
+      }    
+    }
+  }
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+
+ void CSA_Automation()
+
+ // Automated Plant Watering System
+  
+ {
+  moistureValue = analogRead(soil_moisture); 
+  Serial.print(moistureValue); 
+  if(moistureValue > moistureThreshold)
+  {
+//  Pump0.publish("ON");
+  digitalWrite(Relay2, LOW);
+  Serial.println(" | Water pump turned on!");  
+  }
+  else
+  {
+//  Pump0.publish("OFF");
+  digitalWrite(Relay2, HIGH);
+  Serial.println(" | Water pump turned off."); 
+  }
+  
+  if (! Soil_Moisture.publish(moistureValue)) 
+  {
+   Serial.println(F("Failed\n"));
+  }
+  else 
+  {
+   Serial.println(F("Sent!\n"));
+  }
+  delay(1000);
+ }
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+
+void WT_Automation()
+  
+  // Water Level Monitoring And Automated Controlling System
+
+  {
+    float heightInch=0.393701*distanceSensor.measureDistanceCm();    
+    if(heightInch > max_height)
+       heightInch = max_height;
+    if(heightInch < 0)
+       heightInch = 0;      
+    volume = 3.14*radius*radius*(max_height - heightInch);
+    liters = volume*0.0164  ;
+    Serial.println(liters); 
+
+    
+     if(liters <= waterLevelLowerThreshold) 
+       {
+        waterLevelDownCount++;
+       }
+     else 
+       {
+        waterLevelDownCount = 0; 
+       }
+
+     if(liters >= waterLevelUpperThreshold)
+       {
+        waterLevelUpCount++;
+       }
+     else 
+       {
+        waterLevelUpCount = 0; 
+       }
+
+
+      if (! Water_Level.publish(liters)) {
+        Serial.println(F("Failed\n"));
+        }
+        else 
+        {
+         Serial.println(F("Sent!\n"));
+        }
+      delay(1000);
+    }
+
+
+/****************************************************************************************************************************************************************************************************************************************************************************/
+/****************************************************************************************************************************************************************************************************************************************************************************/
+
+void MQTT_connect() 
+ 
+  {  
+  int8_t ret;
+  if (mqtt.connected()) {
+    return;
+  }
+  
+  Serial.print("Connecting to MQTT... ");
+
+  uint8_t retries = 3;
+  
+  while ((ret = mqtt.connect()) != 0) {
+    Serial.println(mqtt.connectErrorString(ret));
+    Serial.println("Retrying MQTT connection in 5 seconds...");
+    mqtt.disconnect();
+    delay(5000); 
+    retries--;
+    if (retries == 0) {
+      while (1);
+    }
+   }
+   Serial.println("MQTT Connected!\n");
+  }             
